@@ -1,6 +1,14 @@
 # About
 This package provides services for django applications. The servitin service is an asynchronous standalone application.
 
+"... when covid times came, Django walked past the pharmacy and saw a package of pills on which it was written: "
+```
+Servitin anti COVID pills!
+
+stay home 50mg
+code 50mg
+```
+
 
 # Installation
 ```shell
