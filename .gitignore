@@ -1,0 +1,7 @@
+*.py[co]
+*.pyc
+*.swp
+__pycache__
+.idea
+dist
+/src/servitin.egg-info/
