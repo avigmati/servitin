@@ -46,27 +46,26 @@ class ZMQServer(zmq_rpc.AttrHandler):
 
         try:
             self.ZMQ_CONN = getattr(settings, f'SERVITIN_{self.app_name.upper()}_ZMQ')
-            self.ZMQ_HOST = self.ZMQ_CONN['HOST']
-            self.ZMQ_PORT = self.ZMQ_CONN['PORT']
+            self.ZMQ_BIND_ADDRESS = self.ZMQ_CONN['BIND_ADDRESS']
             self.ZMQ_SECRET = self.ZMQ_CONN['SECRET']
-            self.ZMQ_ALG = self.ZMQ_CONN['CRYPTO_ALGORITHM']
+            self.ZMQ_ALG = self.ZMQ_CONN.get('CRYPTO_ALGORITHM', 'HS256')
             self.endpoints = self.load_endpoints()
             endpoints = ', '.join([e['name'] for e in self.endpoints]) if len(self.endpoints) else 'no endpoints declared!'
 
             self.zmq_server = self.loop.run_until_complete(
-                zmq_rpc.serve_rpc(self, bind=f"{self.ZMQ_HOST}:{self.ZMQ_PORT}")
+                zmq_rpc.serve_rpc(self, bind=self.ZMQ_BIND_ADDRESS)
             )
-            self.log.info(f"open: {self.ZMQ_HOST}:{self.ZMQ_PORT}, endpoints: {endpoints}", name='zmq')
+            self.log.info(f"open: {self.ZMQ_BIND_ADDRESS}, endpoints: {endpoints}", name='zmq')
         except AttributeError as e:
             raise ImproperlyConfigured(e.__repr__())
         except Exception as e:
-            self.log.critical(f"can't start server on host: '{self.ZMQ_HOST}', port: '{self.ZMQ_PORT}', "
+            self.log.critical(f"can't start server on: '{self.ZMQ_BIND_ADDRESS}', "
                               f"check settings, or network. {e.__str__()}", tb=traceback.format_exc(), name='zmq')
             sys.exit()
 
     def close(self):
         self.zmq_server.close()
-        self.log.info(f"close: {self.ZMQ_HOST}:{self.ZMQ_PORT}", name='zmq')
+        self.log.info(f"close: {self.ZMQ_BIND_ADDRESS}", name='zmq')
 
     def load_endpoints(self):
         endpoints_module = f'{self.app_name}.zmq'

@@ -26,9 +26,7 @@ class Servitin:
         if not self.settings:
             raise ImproperlyConfigured(f'{self.service_name} settings.{sett}')
 
-        self.host = self.settings['HOST']
-        self.port = self.settings['PORT']
-        self.conn_str = f'{self.host}:{self.port}'
+        self.conn_str = self.settings['CONNECT_ADDRESS']
         self.secret = self.settings['SECRET']
 
     async def connect(self, loop=None):
