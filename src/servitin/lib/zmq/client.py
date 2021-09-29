@@ -1,77 +1,99 @@
 import asyncio
 import json
-
 import aiozmq.rpc
 import zmq
-from async_timeout import timeout as atimeout
-from django.conf import settings
-from django.core.exceptions import ImproperlyConfigured
 from jose import jwt
+from async_timeout import timeout as atimeout
+from contextlib import asynccontextmanager, contextmanager
+
+
+try:
+    from django.conf import settings
+    settings.DEBUG
+except Exception:
+    settings = None
 
 
 class ValidationError(Exception):
     pass
 
 
+class ImproperlyConfigured(Exception):
+    pass
+
+
 class Servitin:
-    def __init__(self, service_name, loop=None):
-        self.loop = loop
+    def __init__(self, service_name=None, async_mode=True, connect=None, secret=None, loop=None, timeout=None):
+        self.loop = loop if loop else asyncio.get_event_loop()
         self.connection = None
-        self.algorithm = 'HS256'
-        self.service_name = service_name
+        self.async_mode = async_mode
+        self.timeout = timeout
 
-        sett = f"SERVITIN_{self.service_name.upper()}_ZMQ"
-        self.settings = getattr(settings, sett, None)
+        if settings:
+            try:
+                self.service_name = service_name
+                self.settings = getattr(settings, f"SERVITIN_{self.service_name.upper()}_ZMQ", None)
+                self.conn_str = self.settings['CONNECT_ADDRESS']
+                self.secret = self.settings['SECRET']
+            except Exception as e:
+                raise ImproperlyConfigured(f'Servitin {self.service_name}.settings error: {e.__repr__()}')
+        else:
+            self.conn_str = connect
+            self.secret = secret
 
-        if not self.settings:
-            raise ImproperlyConfigured(f'{self.service_name} settings.{sett}')
+        if self.conn_str is None:
+            raise ImproperlyConfigured('No connection string passed')
 
-        self.conn_str = self.settings['CONNECT_ADDRESS']
-        self.secret = self.settings['SECRET']
+        if self.secret is None:
+            raise ImproperlyConfigured('No secret string passed')
 
-    async def connect(self, loop=None):
+    async def _connect(self):
         try:
-            if loop:
-                self.connection = await aiozmq.rpc.connect_rpc(connect=self.conn_str, loop=loop)
-            else:
-                self.connection = await aiozmq.rpc.connect_rpc(connect=self.conn_str)
+            self.connection = await aiozmq.rpc.connect_rpc(connect=self.conn_str, timeout=self.timeout)
             self.connection.transport.setsockopt(zmq.LINGER, 0)
         except Exception as e:
-            raise Exception(f"{self.service_name}: connect error to {self.conn_str}. {e.__repr__()}")
+            raise Exception(f"Connect to {self.conn_str} error: {e.__repr__()}")
 
     def close(self):
         self.connection.close()
 
-    async def _request(self, endpoint, data, timeout, loop):
-        await self.connect(loop)
+    async def request(self, endpoint, data, timeout=10):
+        if not self.connection:
+            await self._connect()
 
         data = {} if not data else data
-        data = jwt.encode(data, self.secret, algorithm=self.algorithm)
+        data = jwt.encode(data, self.secret, algorithm='HS256')
 
         with atimeout(timeout):
             resp = await self.connection.call.endpoint(endpoint, data)
 
-        self.close()
-        return json.loads(resp)
-
-    def sync_request(self, endpoint, data, timeout=10):
-
-        async def r(svc, loop):
-            return await svc._request(endpoint, data, timeout, loop)
-
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        response = loop.run_until_complete(
-            r(self, loop)
-        )
-        loop.close()
+        response = json.loads(resp)
 
         if response['error'] == 'ValidationError':
             raise ValidationError(response['data'])
         return response
 
-    async def request(self, endpoint, data=None, timeout=10):
-        response = await self._request(endpoint, data, timeout, self.loop)
-        if response['error'] == 'ValidationError':
-            raise ValidationError(response['data'])
-        return response
+    def __getattr__(self, endpoint):
+        async def async_call(data, **kwargs):
+            return await self.request(endpoint, data, **kwargs)
+
+        def sync_call(data, **kwargs):
+            return self.loop.run_until_complete(self.request(endpoint, data, **kwargs))
+
+        return async_call if self.async_mode else sync_call
+
+    @asynccontextmanager
+    async def connect(self):
+        try:
+            await self._connect()
+            yield self
+        finally:
+            self.close()
+
+    @contextmanager
+    def sync_connect(self):
+        try:
+            self.loop.run_until_complete(self._connect())
+            yield self
+        finally:
+            self.close()

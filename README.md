@@ -8,10 +8,11 @@ pip install servitin
 ```
 
 # Howto
+Add ```servitin``` to ```settings.INSTALLED_APPS```
 
 Make sure you have ```LOGGING``` settings in your project - servitin needs this.
 
-Let's say you have a django ```myapp```. Make sure it is enabled in the Django settings.
+Let's say you have a django app ```myapp```.
 
 Make ```myapp``` a servitin service by adding the line ```is_servitin = True``` in ```myapp/apps.py```:
 ```python
@@ -67,16 +68,16 @@ Add to ```myapp/settings.py```:
 from django.conf import settings
 
 settings.SERVITIN_MYAPP_ZMQ = getattr(settings, 'SERVITIN_MYAPP_ZMQ', {
-    'HOST': 'tcp://127.0.0.1',  # or 0.0.0.0 for speak to world
-    'PORT': 55555,
-    'SECRET': '',  # connection password
-    'CRYPTO_ALGORITHM': 'HS256'
+    'BIND_ADDRESS': 'tcp://*:5555',
+    'CONNECT_ADDRESS': 'tcp://127.0.0.1:5555',
+    'SECRET': ''
 })
 ```
 
 Create file ```myapp/zmq.py```:
 
 ```python
+import asyncio
 from servitin.lib.zmq.server import zmq, Response
 from asgiref.sync import sync_to_async
 from django.core import serializers
@@ -95,8 +96,18 @@ async def get_users(request):
         return serializable(data)
     
     return Response(request, await sync_to_async(get_data)())
+
+
+@zmq
+async def heavy_task(request):
+    """ emulate heavy task endpoint for timeout test """
+
+    await asyncio.sleep(5)
+    request.log.info(f'data: {request.data}', id=request.request_id, name='@heavy_task')
+    return Response(request, f'complete: {request.data}')
 ```
 
+Here we have created two endpoints: ```get_users```, ```heavy_task```.
 The service is ready to handle requests, let's test it.
 
 Create django management command ```myapp/management/commands/test_myapp_service.py```:
@@ -105,21 +116,85 @@ Create django management command ```myapp/management/commands/test_myapp_service
 import asyncio
 from django.core.management import BaseCommand
 from servitin.lib.zmq.client import Servitin
-import myapp.settings
+import myapp.settings  # import our service settings
 
 
 class Command(BaseCommand):
     def handle(self, *args, **options):
-        service = Servitin('myapp')
 
-        async def hello():
-            print(await service.request('get_users', {'order_by': 'username'}))
+        async def do():
+            async with Servitin('myapp').connect() as my_service:
+                print(await my_service.get_users({'order_by': 'username'}))
 
-        asyncio.run(hello())
-        service.close()
+        asyncio.run(do())
+
 ```
+In this example servitin client configured via ```myapp/settings.py```.
 
 Run it:
 ```shell
 ./manage.py test_myapp_service
+```
+
+# Calls
+
+It is also possible to use the servitin client outside of django.
+
+Create file ```test_calls.py```:
+
+```python
+from servitin.lib.zmq.client import Servitin
+import asyncio
+
+
+loop = asyncio.get_event_loop()
+params = {'connect': 'tcp://127.0.0.1:5555', 'secret': ''}
+
+
+# ASYNC CALLS
+
+async def do():
+    # manual close connection
+    my_service = Servitin(**params)
+    results = await asyncio.gather(*[
+        my_service.get_users({'order_by': 'username'}),
+        my_service.get_users({'order_by': 'id'})
+    ])
+    print(results)
+    my_service.close()  # close connection
+
+    # auto close connection via context manager
+    async with Servitin(**params).connect() as my_service:
+        print(await my_service.get_users({'order_by': 'username'}))
+
+    # timeout
+    # you can specify timeout by passing it to Servitin():
+    # async with Servitin(connect='tcp://127.0.0.1:5555', secret='', timeout=1).connect() as my_service:
+    async with Servitin(**params).connect() as my_service:
+        try:
+            # or pass it directly in call
+            print(await my_service.heavy_task({'data': 'context manager, timeout call'}, timeout=1))
+        except asyncio.TimeoutError as e:
+            print(e.__repr__())
+
+
+loop.run_until_complete(do())
+
+
+# SYNC CALLS
+
+params = {'connect': 'tcp://127.0.0.1:5555', 'secret': '', 'async_mode': False}
+
+# manual
+my_service = Servitin(**params)
+print(my_service.get_users({'order_by': 'username'}))
+my_service.close()
+
+# via context manager
+with Servitin(**params).sync_connect() as my_service:
+    print(my_service.get_users({'order_by': 'username'}))
+
+
+loop.close()
+
 ```
