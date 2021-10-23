@@ -16,7 +16,7 @@ loop = asyncio.get_event_loop()
 
 class Command(BaseCommand):
     SERVICES = []
-    help = 'Run servitin services 🌐'
+    help = 'Run servitin services'
 
     def add_arguments(self, parser):
         # "--name" argument
@@ -106,7 +106,10 @@ class Command(BaseCommand):
                             service_module = importlib.import_module(app_name)
                             service_servitin_module = importlib.import_module(f'{app_name}.servitin')
                             # import service settings for populate django settings with default values
-                            importlib.import_module(f'{app_name}.settings')
+                            try:
+                                importlib.import_module(f'{app_name}.settings')
+                            except Exception:
+                                pass
 
                             self.SERVICES.append({
                                 'app_config': app_config,

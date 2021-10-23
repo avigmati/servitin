@@ -35,8 +35,6 @@ class Service(BaseService):
         self.log.info(f"Myapp service ready.")
 ```
 
-Create file ```myapp/settings.py```.
-
 (Not necessary) Give the version ```myapp```, write in the file ```myapp/__init__.py```:
 ```python
 __version__ = '1.0'
@@ -48,6 +46,16 @@ Start service:
 ```
 
 If all is ok you will see in the log ```Myapp service ready.```
+
+# Logging
+To configure the built-in logger for each service, Servitin looks for a logger named ```servitin_myservice_logger``` for the ```myservice``` app, 
+similarly for the ```my_other_service``` app it will look for ```servitin_my_other_service_logger```.
+
+Buil-in logger is used like this:
+```python
+self.log.info(f"Myapp service ready.")
+```
+in the example above
 
 # Request handling
 Edit ```myapp/servitin.py``` to make the service as the ZeroMQ server:
@@ -62,7 +70,7 @@ class Service(ZMQServer, BaseService):
         self.log.info(f"Myapp service ready.")
 ```
 
-Add to ```myapp/settings.py```:
+Create ```myapp/settings.py```:
 
 ```python
 from django.conf import settings
@@ -87,12 +95,13 @@ from servitin.utils import serializable
 @zmq
 async def get_users(request):
     order_by = request.data['order_by']
+    # use built-in logger
     request.log.info(f'request order: {order_by}', name='@get_users')
 
     def get_data():
         # data with datetime objects, so it no serializable
         data = serializers.serialize('python', User.objects.all().order_by(order_by), fields=('username', 'date_joined'))
-        # so make it serializable
+        # so make it serializable (you can use your own serializer) 
         return serializable(data)
     
     return Response(request, await sync_to_async(get_data)())
